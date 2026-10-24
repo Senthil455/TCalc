@@ -60,10 +60,11 @@ export function recommendModels(options: RecommendModelsOptions): Recommendation
   const contextTokens = budget === undefined ? workspaceTokens : Math.min(workspaceTokens, budget);
   const contextNeeded = Math.round(contextTokens * 1.2);
   const outputTokens = optOutputTokens ?? DEFAULT_OUTPUT_TOKENS[goal] ?? 4000;
+  const requiredContextTokens = contextNeeded + outputTokens;
 
   const assumptions: string[] = [
     `Output tokens estimated for "${goal}" goal: ${outputTokens}`,
-    `20% safety margin added to context (${contextNeeded} tokens required)`,
+    `20% safety margin added to input context (${contextNeeded} tokens); ${requiredContextTokens} tokens required including expected output`,
     budget !== undefined
       ? `Context limited to user-specified budget of ${budget} tokens`
       : `Using full workspace tokens (${workspaceTokens}) as context`,
@@ -81,9 +82,11 @@ export function recommendModels(options: RecommendModelsOptions): Recommendation
       continue;
     }
 
-    const fitsContext = model.contextWindow >= contextNeeded;
+    const fitsContext = model.contextWindow >= requiredContextTokens;
+    const fitsOutput = model.maxOutputTokens >= outputTokens;
+    const fits = fitsContext && fitsOutput;
 
-    if (!fitsContext) {
+    if (!fits) {
       rejected.push(model.id);
     }
 
@@ -94,7 +97,7 @@ export function recommendModels(options: RecommendModelsOptions): Recommendation
       cachedInputTokens: Math.round(contextTokens * 0.3),
     });
 
-    const contextFit = calculateContextFit(model, contextNeeded);
+    const contextFit = calculateContextFit(model, requiredContextTokens);
     const taskQualityFit = calculateTaskFit(model, GOAL_DIFFICULTY[goal]);
     const costEfficiency = calculateCostEfficiency(cost);
     const latencyFit = model.latencyScore !== null ? model.latencyScore / 100 : 0.5;
@@ -113,7 +116,7 @@ export function recommendModels(options: RecommendModelsOptions): Recommendation
       cost,
     };
 
-    if (fitsContext) {
+    if (fits) {
       fitting.push(entry);
     } else {
       overflowing.push(entry);
@@ -127,7 +130,7 @@ export function recommendModels(options: RecommendModelsOptions): Recommendation
   }
 
   if (fitting.length === 0) {
-    assumptions.push("No model fits the required context; recommend using repo-map-first strategy to reduce context");
+    assumptions.push("No model satisfies both the context window and expected output limits; the models below are fallback comparisons and are not sufficient for this request");
   }
 
   const usedIds = new Set<string>();
@@ -158,10 +161,10 @@ export function recommendModels(options: RecommendModelsOptions): Recommendation
     score: item.score,
     costEstimate: item.cost,
     reasons: [...generateReasons(item.model, item.score, goal), ...extraReasons],
-    overflowRisk: calculateOverflowRisk(item.model, contextNeeded),
+    overflowRisk: calculateOverflowRisk(item.model, requiredContextTokens),
     expectedQuality: item.score.totalScore >= 0.7 ? "high" : item.score.totalScore >= 0.5 ? "medium" : "low",
-    warnings: generateWarnings(item.model, goal, contextNeeded),
-    optimizationSuggestions: generateOptimizations(item.model, workspaceTokens, contextNeeded),
+    warnings: generateWarnings(item.model, goal, requiredContextTokens, outputTokens),
+    optimizationSuggestions: generateOptimizations(item.model, workspaceTokens, requiredContextTokens),
   });
 
   const balancedRecommendation = toRecommendation(
@@ -234,10 +237,13 @@ function generateReasons(model: ModelInfo, score: ModelScore, goal: WorkspaceGoa
   return reasons;
 }
 
-function generateWarnings(model: ModelInfo, goal: WorkspaceGoal, contextNeeded: number): string[] {
+function generateWarnings(model: ModelInfo, goal: WorkspaceGoal, requiredContextTokens: number, outputTokens: number): string[] {
   const warnings: string[] = [];
-  if (model.contextWindow < contextNeeded) {
-    warnings.push("Context window insufficient — overflow likely; consider repo-map-first strategy");
+  if (model.contextWindow < requiredContextTokens) {
+    warnings.push("Context window insufficient for input plus expected output; overflow likely; consider repo-map-first strategy");
+  }
+  if (model.maxOutputTokens < outputTokens) {
+    warnings.push(`Maximum output (${model.maxOutputTokens} tokens) is below the expected output for the "${goal}" goal (${outputTokens} tokens)`);
   }
   if (model.codingScore !== null && model.codingScore < 50) {
     warnings.push("Below-average coding benchmark scores");
@@ -245,9 +251,9 @@ function generateWarnings(model: ModelInfo, goal: WorkspaceGoal, contextNeeded: 
   return warnings;
 }
 
-function generateOptimizations(model: ModelInfo, workspaceTokens: number, contextNeeded: number): string[] {
+function generateOptimizations(model: ModelInfo, workspaceTokens: number, requiredContextTokens: number): string[] {
   const suggestions: string[] = [];
-  if (workspaceTokens > model.contextWindow * 0.5 || contextNeeded > model.contextWindow) {
+  if (workspaceTokens > model.contextWindow * 0.5 || requiredContextTokens > model.contextWindow) {
     suggestions.push("Use a repo map instead of full workspace to reduce context");
   }
   if (workspaceTokens > 200_000) {

@@ -73,7 +73,7 @@ describe("recommendModelsTool", () => {
       for (const tier of tiers) {
         expect(tier.overflowRisk).toBeGreaterThan(0);
         expect(tier.warnings).toContain(
-          "Context window insufficient — overflow likely; consider repo-map-first strategy",
+          "Context window insufficient for input plus expected output; overflow likely; consider repo-map-first strategy",
         );
         expect(tier.optimizationSuggestions).toContain(
           "Use a repo map instead of full workspace to reduce context",

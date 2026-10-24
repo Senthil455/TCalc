@@ -443,7 +443,7 @@ describe("recommendModels", () => {
     const result = recommendModels({
       models: [cheapModel, weakModel, midModel, bigModel],
       workspaceTokens: 5000,
-      goal: "build-mvp",
+      goal: "debug",
       privacyMode: "cloud-ok",
     });
     const tierIds = [
@@ -453,5 +453,110 @@ describe("recommendModels", () => {
     ];
     expect(new Set(tierIds).size).toBe(3);
     expect(tierIds).not.toContain("weak");
+  });
+
+  it("rejects a model whose context fits but whose output limit cannot hold the expected output", () => {
+    // 5,000 input tokens become 6,000 after the safety margin. build-mvp expects 8,000 output,
+    // so cheapModel's 16,000 context is enough but its 4,096 max output is not.
+    const result = recommendModels({
+      models: [cheapModel],
+      workspaceTokens: 5000,
+      goal: "build-mvp",
+    });
+
+    expect(result.rejected).toContain("cheap");
+    expect(result.cheapestSufficient.warnings.some((warning) =>
+      warning.includes("Maximum output"),
+    )).toBe(true);
+    expect(result.assumptions.some((assumption) =>
+      assumption.includes("not sufficient"),
+    )).toBe(true);
+  });
+
+  it("rejects a model whose output fits but whose context cannot hold input plus output", () => {
+    const inputFitsOnly: ModelInfo = {
+      ...cheapModel,
+      id: "input-fits-only",
+      contextWindow: 10000,
+      maxOutputTokens: 8000,
+    };
+
+    const result = recommendModels({
+      models: [inputFitsOnly],
+      workspaceTokens: 5000,
+      goal: "build-mvp",
+    });
+
+    // 6,000 input-side tokens plus 8,000 expected output needs 14,000 tokens.
+    expect(result.rejected).toContain("input-fits-only");
+    expect(result.cheapestSufficient.overflowRisk).toBeGreaterThan(0);
+  });
+
+  it("treats an exact context and output boundary as sufficient", () => {
+    const exact: ModelInfo = {
+      ...cheapModel,
+      id: "exact",
+      contextWindow: 10000,
+      maxOutputTokens: 4000,
+    };
+
+    const result = recommendModels({
+      models: [exact],
+      workspaceTokens: 5000,
+      goal: "debug",
+    });
+
+    expect(result.rejected).not.toContain("exact");
+    expect(result.cheapestSufficient.modelId).toBe("exact");
+    expect(result.cheapestSufficient.overflowRisk).toBe(0);
+  });
+
+  it("rejects models one token below either boundary", () => {
+    const contextShort: ModelInfo = {
+      ...cheapModel,
+      id: "context-short",
+      contextWindow: 9999,
+      maxOutputTokens: 4000,
+    };
+    const outputShort: ModelInfo = {
+      ...cheapModel,
+      id: "output-short",
+      contextWindow: 10000,
+      maxOutputTokens: 3999,
+    };
+
+    const result = recommendModels({
+      models: [contextShort, outputShort],
+      workspaceTokens: 5000,
+      goal: "debug",
+    });
+
+    expect(result.rejected).toEqual(
+      expect.arrayContaining(["context-short", "output-short"]),
+    );
+  });
+
+  it("checks an explicit output token value against maxOutputTokens", () => {
+    const limited: ModelInfo = {
+      ...cheapModel,
+      id: "limited-output",
+      maxOutputTokens: 2000,
+    };
+
+    const fits = recommendModels({
+      models: [limited],
+      workspaceTokens: 5000,
+      goal: "debug",
+      outputTokens: 2000,
+    });
+    const doesNotFit = recommendModels({
+      models: [limited],
+      workspaceTokens: 5000,
+      goal: "debug",
+      outputTokens: 2001,
+    });
+
+    expect(fits.rejected).not.toContain("limited-output");
+    expect(doesNotFit.rejected).toContain("limited-output");
   });
 });
