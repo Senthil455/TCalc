@@ -108,6 +108,50 @@ describe("createRepoMap", () => {
     }
   });
 
+  it("keeps summary and agent instructions consistent after trimming", () => {
+    const scan = makeFixtureScanResult();
+    const result = createRepoMap(scan, { tokenBudget: 200 });
+
+    expect(result.overflowNotes.length).toBeGreaterThan(0);
+
+    const importantCount = Number(
+      result.summary.match(/Important files identified: (\d+)/)?.[1],
+    );
+    const importantTokens = Number(
+      result.summary.match(/Tokens in important files: ~([\d,]+)/)?.[1].replace(/,/g, ""),
+    );
+
+    expect(importantCount).toBe(result.importantFiles.length);
+    expect(importantTokens).toBe(
+      result.importantFiles.reduce((sum, file) => sum + file.estimatedTokens, 0),
+    );
+    expect(result.summary).toContain(`Entry points: ${result.entryPoints.length}`);
+    expect(result.summary).toContain(`Tests: ${result.testFiles.length}`);
+    expect(result.summary).toContain(`Config files: ${result.configFiles.length}`);
+    expect(result.summary).toContain(
+      `Documentation files: ${result.documentationFiles.length}`,
+    );
+    expect(result.summary).toContain(`Large files: ${result.largeFiles.length}`);
+    expect(result.summary).toContain(`Risky files: ${result.riskyFiles.length}`);
+
+    const instructions = result.agentInstructions.join("\n");
+    if (result.largeFiles.length === 0) {
+      expect(instructions).not.toContain("large file(s)");
+    }
+    if (result.riskyFiles.length === 0) {
+      expect(instructions).not.toContain("sensitive file(s)");
+    }
+    if (result.generatedFiles.length === 0) {
+      expect(instructions).not.toContain("generated file(s)");
+    }
+    for (const removedPath of ["data/big-file.json", "dist/bundle.min.js", ".env"]) {
+      if (!result.importantFiles.some((file) => file.relativePath === removedPath)) {
+        expect(instructions).not.toContain(removedPath);
+      }
+    }
+    expect(instructions).toContain("Key entry points to read first:");
+  });
+
   it("includes top level folders", () => {
     const scan = makeFixtureScanResult();
     const result = createRepoMap(scan, { tokenBudget: 8000 });

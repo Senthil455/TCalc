@@ -36,12 +36,16 @@ export function budgetRepoMap(repoMap: RepoMapResult, tokenBudget: number): Repo
     if (result.estimatedTokens <= tokenBudget) break;
     removeEverywhere(result, file.relativePath);
     trimmedCount++;
+    refreshSummary(result);
+    refreshAgentInstructions(result);
     updateSerializedEstimate(result);
   }
 
   if (trimmedCount > 0) {
     result.overflowNotes.push(`Trimmed ${trimmedCount} lower-priority file(s); entry points, config, and documentation were preserved.`);
     refreshSymbolSummary(result);
+    refreshSummary(result);
+    refreshAgentInstructions(result);
   }
 
   updateSerializedEstimate(result);
@@ -93,6 +97,79 @@ function refreshSymbolSummary(repoMap: RepoMapResult): void {
     `Interfaces/Types: ${repoMap.symbols.filter((symbol) => symbol.kind === "interface" || symbol.kind === "type").length}`,
     `Routes: ${repoMap.routes.length}`,
   ];
+}
+
+function refreshSummary(repoMap: RepoMapResult): void {
+  const importantTokens = repoMap.importantFiles.reduce(
+    (sum, file) => sum + file.estimatedTokens,
+    0,
+  );
+  const derivedLines: Array<[string, string]> = [
+    ["Important files identified:", `Important files identified: ${repoMap.importantFiles.length}`],
+    ["Entry points:", `Entry points: ${repoMap.entryPoints.length}`],
+    ["Tests:", `Tests: ${repoMap.testFiles.length}`],
+    ["Config files:", `Config files: ${repoMap.configFiles.length}`],
+    ["Documentation files:", `Documentation files: ${repoMap.documentationFiles.length}`],
+    ["Large files:", `Large files: ${repoMap.largeFiles.length}`],
+    ["Risky files:", `Risky files: ${repoMap.riskyFiles.length}`],
+    ["Tokens in important files:", `Tokens in important files: ~${importantTokens.toLocaleString()}`],
+  ];
+
+  const replaced = new Set<string>();
+  const lines = repoMap.summary.split("\n").map((line) => {
+    const match = derivedLines.find(([prefix]) => line.startsWith(prefix));
+    if (!match) return line;
+    replaced.add(match[0]);
+    return match[1];
+  });
+
+  for (const [prefix, line] of derivedLines) {
+    if (!replaced.has(prefix)) lines.push(line);
+  }
+
+  repoMap.summary = lines.join("\n");
+}
+
+function refreshAgentInstructions(repoMap: RepoMapResult): void {
+  const updated: string[] = [];
+
+  for (const instruction of repoMap.agentInstructions) {
+    if (instruction.startsWith("Key entry points to read first:")) {
+      if (repoMap.entryPoints.length > 0) {
+        const entryPoints = repoMap.entryPoints
+          .slice(0, 5)
+          .map((file) => file.relativePath)
+          .join(", ");
+        updated.push(`Key entry points to read first: ${entryPoints}`);
+      }
+      continue;
+    }
+
+    if (instruction.startsWith("There are ") && instruction.includes("large file(s)")) {
+      if (repoMap.largeFiles.length > 0) {
+        updated.push(`There are ${repoMap.largeFiles.length} large file(s). Ask before reading them.`);
+      }
+      continue;
+    }
+
+    if (instruction.startsWith("There are ") && instruction.includes("sensitive file(s)")) {
+      if (repoMap.riskyFiles.length > 0) {
+        updated.push(`There are ${repoMap.riskyFiles.length} potentially sensitive file(s). Ask before reading.`);
+      }
+      continue;
+    }
+
+    if (instruction.startsWith("There are ") && instruction.includes("generated file(s)")) {
+      if (repoMap.generatedFiles.length > 0) {
+        updated.push(`There are ${repoMap.generatedFiles.length} generated file(s). Avoid editing them.`);
+      }
+      continue;
+    }
+
+    updated.push(instruction);
+  }
+
+  repoMap.agentInstructions = updated;
 }
 
 function withoutPath(files: RepoMapFile[], relativePath: string): RepoMapFile[] {

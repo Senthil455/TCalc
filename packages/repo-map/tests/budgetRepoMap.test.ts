@@ -159,6 +159,85 @@ describe("budgetRepoMap", () => {
     expect(serializedTokens).toBeLessThanOrEqual(500);
   });
 
+  it("refreshes summary and agent instructions after trimming", () => {
+    const entryPoint = makeFile("src/index.ts", 100, 200);
+    const largeFile = makeFile("data/huge.json", 20, 100_000);
+    const generatedFile = makeFile("dist/bundle.js", 10, 50_000);
+    const riskyFile = makeFile(".env", 10, 10);
+    const sourceFile = makeFile("src/util.ts", 60, 200);
+
+    const result = makeResult({
+      tokenBudget: 100,
+      estimatedTokens: 150_000,
+      summary: [
+        "Files: 10 included / 2 excluded (83.3% of 12 total)",
+        "Important files identified: 5",
+        "Entry points: 1",
+        "Tests: 0",
+        "Config files: 0",
+        "Documentation files: 0",
+        "Large files: 1",
+        "Risky files: 1",
+        "Tokens in important files: ~150,410",
+        "Workspace total: ~500,000 tokens",
+      ].join("\n"),
+      entryPoints: [entryPoint],
+      largeFiles: [largeFile],
+      generatedFiles: [generatedFile],
+      riskyFiles: [riskyFile],
+      importantFiles: [entryPoint, largeFile, generatedFile, riskyFile, sourceFile],
+      agentInstructions: [
+        "Start by reading this repo map to understand the workspace structure.",
+        "Key entry points to read first: src/index.ts",
+        "There are 1 large file(s). Ask before reading them.",
+        "There are 1 potentially sensitive file(s). Ask before reading.",
+        "There are 1 generated file(s). Avoid editing them.",
+      ],
+    });
+
+    const budgeted = budgetRepoMap(result, 100);
+
+    expect(budgeted.importantFiles.map((file) => file.relativePath)).toEqual([
+      "src/index.ts",
+    ]);
+    expect(budgeted.summary).toContain("Important files identified: 1");
+    expect(budgeted.summary).toContain("Entry points: 1");
+    expect(budgeted.summary).toContain("Large files: 0");
+    expect(budgeted.summary).toContain("Risky files: 0");
+    expect(budgeted.summary).toContain("Tokens in important files: ~200");
+    expect(budgeted.summary).toContain("Files: 10 included / 2 excluded (83.3% of 12 total)");
+    expect(budgeted.summary).toContain("Workspace total: ~500,000 tokens");
+
+    const instructions = budgeted.agentInstructions.join("\n");
+    expect(instructions).toContain("Key entry points to read first: src/index.ts");
+    expect(instructions).not.toContain("large file(s)");
+    expect(instructions).not.toContain("sensitive file(s)");
+    expect(instructions).not.toContain("generated file(s)");
+    expect(instructions).not.toContain("data/huge.json");
+    expect(instructions).not.toContain("dist/bundle.js");
+  });
+
+  it("explains when the preserved high-priority sections exceed the budget", () => {
+    const entryPoint = makeFile("src/index.ts", 100, 5000);
+    const result = makeResult({
+      tokenBudget: 100,
+      estimatedTokens: 5000,
+      entryPoints: [entryPoint],
+      importantFiles: [entryPoint],
+    });
+
+    const budgeted = budgetRepoMap(result, 100);
+
+    expect(budgeted.importantFiles).toHaveLength(1);
+    expect(budgeted.estimatedTokens).toBeGreaterThan(100);
+    expect(budgeted.overflowNotes.join("\n")).toContain(
+      "required high-priority sections",
+    );
+    expect(estimateTokens(formatRepoMapMarkdown(budgeted))).toBe(
+      budgeted.estimatedTokens,
+    );
+  });
+
   it("removes code metadata for trimmed source files", () => {
     const file = makeFile("src/large.ts", 10, 100_000);
     const result = makeResult({
