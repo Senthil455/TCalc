@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { WorkspaceScanResult, WorkspaceFileInfo, FolderStats, LanguageBreakdown } from "@wma/core";
 import { createRepoMap } from "../src/createRepoMap.js";
 
@@ -156,6 +159,44 @@ describe("createRepoMap", () => {
     // The excluded file keeps its tokens out of the map's important set.
     expect(result.importantFiles.map((f) => f.relativePath)).not.toContain("src/vendor.min.js");
     expect(result.recommendedExclude.filter((f) => f.relativePath === "src/vendor.min.js")).toHaveLength(1);
+  });
+
+  it("applies inclusion and maxFiles options to symbols and sections", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "wma-repo-map-options-"));
+    try {
+      writeFileSync(join(tempDir, "index.ts"), "export function main() {}\n", "utf-8");
+      writeFileSync(join(tempDir, "util.test.ts"), "export function helper() {}\n", "utf-8");
+
+      const files: WorkspaceFileInfo[] = [
+        makeFile({ relativePath: "src/index.ts", path: join(tempDir, "index.ts"), extension: ".ts", estimatedTokens: 200 }),
+        makeFile({ relativePath: "src/util.test.ts", path: join(tempDir, "util.test.ts"), extension: ".ts", estimatedTokens: 100 }),
+      ];
+      const scan: WorkspaceScanResult = {
+        rootPath: tempDir,
+        scannedAt: new Date().toISOString(),
+        totalFiles: files.length,
+        includedFiles: files.length,
+        excludedFiles: 0,
+        totalBytes: files.reduce((s, f) => s + f.bytes, 0),
+        includedBytes: files.reduce((s, f) => s + f.bytes, 0),
+        totalEstimatedTokens: files.reduce((s, f) => s + f.estimatedTokens, 0),
+        includedTokens: files.reduce((s, f) => s + f.estimatedTokens, 0),
+        files,
+        folders: [],
+        languages: [],
+        warnings: [],
+        riskFiles: [],
+      };
+
+      const result = createRepoMap(scan, { tokenBudget: 8000, includeTests: false, maxFiles: 1 });
+
+      expect(result.importantFiles.map((f) => f.relativePath)).toEqual(["src/index.ts"]);
+      expect(result.testFiles).toHaveLength(0);
+      expect(result.recommendedInclude.map((f) => f.relativePath)).toEqual(["src/index.ts"]);
+      expect(result.symbols.map((s) => s.relativePath)).toEqual(["src/index.ts"]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("handles empty scan result gracefully", () => {

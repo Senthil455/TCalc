@@ -34,6 +34,16 @@ function makeScanResult(files: WorkspaceFileInfo[]): WorkspaceScanResult {
   };
 }
 
+function makeMixedScanResult(): WorkspaceScanResult {
+  return makeScanResult([
+    makeFile({ relativePath: "src/index.ts", extension: ".ts", estimatedTokens: 200 }),
+    makeFile({ relativePath: "package.json", extension: ".json", language: "JSON" }),
+    makeFile({ relativePath: "README.md", extension: ".md", language: "Markdown" }),
+    makeFile({ relativePath: "src/util.test.ts", extension: ".ts" }),
+    makeFile({ relativePath: "src/util.ts", extension: ".ts" }),
+  ]);
+}
+
 describe("selectImportantFiles", () => {
   it("detects package.json", () => {
     const result = makeScanResult([
@@ -154,5 +164,65 @@ describe("selectImportantFiles", () => {
     const selected = selectImportantFiles(result, { tokenBudget: 8000 });
     expect(selected.excludedFiles).toHaveLength(1);
     expect(selected.excludedFiles[0].relativePath).toBe("node_modules/foo/index.js");
+  });
+
+  it("can omit test files from every selection view", () => {
+    const selected = selectImportantFiles(makeMixedScanResult(), { tokenBudget: 8000, includeTests: false });
+
+    expect(selected.testFiles).toHaveLength(0);
+    expect(selected.importantFiles.map((f) => f.relativePath)).not.toContain("src/util.test.ts");
+    expect(selected.recommendedInclude.map((f) => f.relativePath)).not.toContain("src/util.test.ts");
+  });
+
+  it("can omit documentation files from every selection view", () => {
+    const selected = selectImportantFiles(makeMixedScanResult(), { tokenBudget: 8000, includeDocs: false });
+
+    expect(selected.documentationFiles).toHaveLength(0);
+    expect(selected.importantFiles.map((f) => f.relativePath)).not.toContain("README.md");
+    expect(selected.recommendedInclude.map((f) => f.relativePath)).not.toContain("README.md");
+  });
+
+  it("can omit config files from every selection view", () => {
+    const selected = selectImportantFiles(makeMixedScanResult(), { tokenBudget: 8000, includeConfigs: false });
+
+    expect(selected.configFiles).toHaveLength(0);
+    expect(selected.importantFiles.map((f) => f.relativePath)).not.toContain("package.json");
+    expect(selected.recommendedInclude.map((f) => f.relativePath)).not.toContain("package.json");
+  });
+
+  it("applies maxFiles to important files, categories, and recommendations", () => {
+    const selected = selectImportantFiles(makeMixedScanResult(), { tokenBudget: 8000, maxFiles: 2 });
+
+    expect(selected.importantFiles.map((f) => f.relativePath)).toEqual(["src/index.ts", "package.json"]);
+    expect(selected.entryPoints.map((f) => f.relativePath)).toEqual(["src/index.ts"]);
+    expect(selected.configFiles.map((f) => f.relativePath)).toEqual(["package.json"]);
+    expect(selected.documentationFiles).toHaveLength(0);
+    expect(selected.testFiles).toHaveLength(0);
+    expect(selected.recommendedInclude.map((f) => f.relativePath)).toEqual(["src/index.ts", "package.json"]);
+  });
+
+  it("combines inclusion flags with maxFiles", () => {
+    const selected = selectImportantFiles(makeMixedScanResult(), {
+      tokenBudget: 8000,
+      includeTests: false,
+      includeDocs: false,
+      maxFiles: 2,
+    });
+
+    expect(selected.importantFiles.map((f) => f.relativePath)).toEqual(["src/index.ts", "package.json"]);
+    expect(selected.testFiles).toHaveLength(0);
+    expect(selected.documentationFiles).toHaveLength(0);
+    expect(selected.recommendedInclude.map((f) => f.relativePath)).toEqual(["src/index.ts", "package.json"]);
+  });
+
+  it("allows maxFiles to select no important files", () => {
+    const selected = selectImportantFiles(makeMixedScanResult(), { tokenBudget: 8000, maxFiles: 0 });
+
+    expect(selected.importantFiles).toHaveLength(0);
+    expect(selected.entryPoints).toHaveLength(0);
+    expect(selected.configFiles).toHaveLength(0);
+    expect(selected.documentationFiles).toHaveLength(0);
+    expect(selected.testFiles).toHaveLength(0);
+    expect(selected.recommendedInclude).toHaveLength(0);
   });
 });

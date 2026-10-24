@@ -242,7 +242,23 @@ export function selectImportantFiles(
     }
   }
 
-  const allImportant = [...entryPoints, ...configFiles, ...documentationFiles, ...testFiles, ...sourceFiles];
+  const includedCategories = [
+    ...entryPoints,
+    ...(options.includeConfigs === false ? [] : configFiles),
+    ...(options.includeDocs === false ? [] : documentationFiles),
+    ...(options.includeTests === false ? [] : testFiles),
+    ...sourceFiles,
+  ];
+
+  let maxFiles: number | undefined;
+  if (options.maxFiles !== undefined && Number.isFinite(options.maxFiles)) {
+    maxFiles = Math.max(0, Math.floor(options.maxFiles));
+  }
+
+  const allImportant = maxFiles === undefined ? includedCategories : includedCategories.slice(0, maxFiles);
+  const selectedPaths = new Set(allImportant.map((f) => f.relativePath));
+  const keepSelected = (files: RepoMapFile[]): RepoMapFile[] =>
+    files.filter((f) => selectedPaths.has(f.relativePath));
 
   const recommendedInclude = allImportant
     .filter((f) => f.priority >= 60)
@@ -254,10 +270,10 @@ export function selectImportantFiles(
 
   return {
     importantFiles: allImportant,
-    entryPoints,
-    testFiles,
-    configFiles,
-    documentationFiles,
+    entryPoints: keepSelected(entryPoints),
+    testFiles: keepSelected(testFiles),
+    configFiles: keepSelected(configFiles),
+    documentationFiles: keepSelected(documentationFiles),
     riskyFiles,
     largeFiles,
     generatedFiles,
