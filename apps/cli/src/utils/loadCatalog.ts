@@ -1,6 +1,8 @@
 import { loadModelCatalog, validateModelCatalog } from "@wma/model-catalog";
 import type { ModelCatalog } from "@wma/core";
 import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { findCatalogInWorkspace } from "./paths.js";
 import { CliError } from "./errors.js";
 
@@ -16,8 +18,33 @@ export function resolveCatalog(catalogPath?: string, rootPath?: string): ModelCa
       if (cat.models.length > 0) return validateLoadedCatalog(cat, cp);
     }
   }
-  // fallback: try default bundled catalogs directory
-  return validateLoadedCatalog(loadModelCatalog("catalogs"), "catalogs/models.json");
+  const bundledPath = resolveBundledCatalogPath();
+  return validateLoadedCatalog(
+    loadModelCatalog(bundledPath, { strict: true }),
+    bundledPath,
+  );
+}
+
+export function bundledCatalogCandidates(moduleUrl: string = import.meta.url): string[] {
+  const moduleDir = path.dirname(fileURLToPath(moduleUrl));
+  const candidates = [
+    path.resolve(moduleDir, "../../catalogs/models.json"),
+    path.resolve(moduleDir, "../catalogs/models.json"),
+    path.resolve(moduleDir, "../../../catalogs/models.json"),
+    path.resolve(moduleDir, "../../../../catalogs/models.json"),
+  ];
+  return [...new Set(candidates)];
+}
+
+export function resolveBundledCatalogPath(moduleUrl: string = import.meta.url): string {
+  const candidates = bundledCatalogCandidates(moduleUrl);
+  const found = candidates.find((candidate) => existsSync(candidate));
+  if (!found) {
+    throw new CliError(
+      `Bundled model catalog not found. Looked in: ${candidates.join(", ")}. Reinstall @wma/cli or pass --catalog.`,
+    );
+  }
+  return found;
 }
 
 function validateLoadedCatalog(catalog: ModelCatalog, source: string): ModelCatalog {
