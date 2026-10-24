@@ -27,6 +27,7 @@ export interface FolderStats {
   totalFiles: number;
   totalBytes: number;
   totalTokens: number;
+  includedTokens: number;
   includedFiles: number;
   excludedFiles: number;
 }

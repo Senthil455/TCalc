@@ -231,6 +231,31 @@ describe("scanWorkspace traversal", () => {
     expect(result.includedTokens).toBe(index?.estimatedTokens);
   });
 
+  it("reports included-only folder tokens alongside whole-folder totals", async () => {
+    const root = await tempDirectory("tcalc-folder-tokens-");
+    const source = path.join(root, "src");
+
+    await mkdir(source);
+    await writeFile(path.join(source, "index.ts"), "export const value = 1;");
+    await writeFile(path.join(source, "vendor.min.js"), `${"a".repeat(2000)};`);
+
+    const result = await scanWorkspace({ rootPath: root });
+
+    const folder = result.folders.find((entry) => entry.folderPath === "src");
+    const index = result.files.find((file) => file.relativePath === "src/index.ts");
+    const vendor = result.files.find((file) => file.relativePath === "src/vendor.min.js");
+
+    expect(folder).toBeDefined();
+    expect(folder!.totalFiles).toBe(2);
+    expect(folder!.includedFiles).toBe(1);
+    expect(folder!.excludedFiles).toBe(1);
+    expect(folder!.includedTokens).toBe(index?.estimatedTokens);
+    expect(folder!.totalTokens).toBe(
+      (index?.estimatedTokens ?? 0) + (vendor?.estimatedTokens ?? 0),
+    );
+    expect(folder!.totalTokens).toBeGreaterThan(folder!.includedTokens);
+  });
+
   it("discards legacy v1 caches so post-4KB secrets are rescanned and excluded", async () => {
     const root = await tempDirectory("tcalc-legacy-cache-");
     const fileName = "late-secret.ts";

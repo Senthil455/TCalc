@@ -341,6 +341,7 @@ function computeFolderStats(files: WorkspaceFileInfo[]): FolderStats[] {
       totalFiles: folderFiles.length,
       totalBytes: folderFiles.reduce((s, f) => s + f.bytes, 0),
       totalTokens: folderFiles.reduce((s, f) => s + f.estimatedTokens, 0),
+      includedTokens: folderFiles.filter(f => f.included).reduce((s, f) => s + f.estimatedTokens, 0),
       includedFiles: folderFiles.filter(f => f.included).length,
       excludedFiles: folderFiles.filter(f => !f.included).length,
     });

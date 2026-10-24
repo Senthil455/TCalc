@@ -107,7 +107,7 @@ describe("generateJsonReport", () => {
     scan.totalEstimatedTokens = 60000;
     scan.includedTokens = 60000;
     scan.files = [sourceFile];
-    scan.folders = [{ folderPath: "src", totalFiles: 1, totalBytes: 200000, totalTokens: 60000, includedFiles: 1, excludedFiles: 0 }];
+    scan.folders = [{ folderPath: "src", totalFiles: 1, totalBytes: 200000, totalTokens: 60000, includedTokens: 60000, includedFiles: 1, excludedFiles: 0 }];
     scan.languages = [{ language: "TypeScript", fileCount: 1, totalBytes: 200000, totalTokens: 60000, percentage: 1 }];
 
     const parsed = JSON.parse(generateJsonReport(scan, null));
@@ -124,7 +124,7 @@ describe("generateJsonReport", () => {
     const scan = createMockScanResult();
     scan.includedTokens = 0;
     scan.files = [{ path: "/empty", relativePath: "empty", extension: "", language: "Unknown", bytes: 0, estimatedTokens: 0, included: true, riskFlags: [] }];
-    scan.folders = [{ folderPath: ".", totalFiles: 1, totalBytes: 0, totalTokens: 0, includedFiles: 1, excludedFiles: 0 }];
+    scan.folders = [{ folderPath: ".", totalFiles: 1, totalBytes: 0, totalTokens: 0, includedTokens: 0, includedFiles: 1, excludedFiles: 0 }];
     const parsed = JSON.parse(generateJsonReport(scan, createMockRecommendation()));
     expect(parsed.topTokenConsumers[0].percentage).toBe(0);
     expect(parsed.topFolders[0].percentage).toBe(0);

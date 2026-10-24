@@ -33,12 +33,12 @@ function makeFixtureScanResult(): WorkspaceScanResult {
   ];
 
   const folders: FolderStats[] = [
-    { folderPath: ".", totalFiles: 13, totalBytes: 0, totalTokens: 0, includedFiles: 13, excludedFiles: 0 },
-    { folderPath: "src", totalFiles: 4, totalBytes: 0, totalTokens: 490, includedFiles: 4, excludedFiles: 0 },
-    { folderPath: "src/lib", totalFiles: 2, totalBytes: 0, totalTokens: 140, includedFiles: 2, excludedFiles: 0 },
-    { folderPath: "test", totalFiles: 2, totalBytes: 0, totalTokens: 210, includedFiles: 2, excludedFiles: 0 },
-    { folderPath: "dist", totalFiles: 1, totalBytes: 0, totalTokens: 8000, includedFiles: 1, excludedFiles: 0 },
-    { folderPath: "data", totalFiles: 1, totalBytes: 0, totalTokens: 100000, includedFiles: 1, excludedFiles: 0 },
+    { folderPath: ".", totalFiles: 13, totalBytes: 0, totalTokens: 0, includedTokens: 0, includedFiles: 13, excludedFiles: 0 },
+    { folderPath: "src", totalFiles: 4, totalBytes: 0, totalTokens: 490, includedTokens: 490, includedFiles: 4, excludedFiles: 0 },
+    { folderPath: "src/lib", totalFiles: 2, totalBytes: 0, totalTokens: 140, includedTokens: 140, includedFiles: 2, excludedFiles: 0 },
+    { folderPath: "test", totalFiles: 2, totalBytes: 0, totalTokens: 210, includedTokens: 210, includedFiles: 2, excludedFiles: 0 },
+    { folderPath: "dist", totalFiles: 1, totalBytes: 0, totalTokens: 8000, includedTokens: 8000, includedFiles: 1, excludedFiles: 0 },
+    { folderPath: "data", totalFiles: 1, totalBytes: 0, totalTokens: 100000, includedTokens: 100000, includedFiles: 1, excludedFiles: 0 },
   ];
 
   const languages: LanguageBreakdown[] = [
@@ -116,6 +116,45 @@ describe("createRepoMap", () => {
     const srcFolder = result.topLevelFolders.find((f) => f.relativePath === "src");
     expect(srcFolder).toBeDefined();
     expect(srcFolder!.fileCount).toBeGreaterThan(0);
+  });
+
+  it("ranks folders by included tokens instead of whole-folder totals", () => {
+    const files: WorkspaceFileInfo[] = [
+      makeFile({ relativePath: "src/index.ts", extension: ".ts", estimatedTokens: 500 }),
+      makeFile({ relativePath: "assets/bundle.min.js", extension: ".js", estimatedTokens: 100, riskFlags: ["generated"] }),
+      makeFile({
+        relativePath: "assets/archive.zip",
+        extension: ".zip",
+        estimatedTokens: 200000,
+        included: false,
+        excludedReason: "generated",
+        riskFlags: ["generated"],
+      }),
+    ];
+    const scan: WorkspaceScanResult = {
+      rootPath: "/workspace",
+      scannedAt: new Date().toISOString(),
+      totalFiles: files.length,
+      includedFiles: files.filter((f) => f.included).length,
+      excludedFiles: files.filter((f) => !f.included).length,
+      totalBytes: files.reduce((s, f) => s + f.bytes, 0),
+      includedBytes: files.filter((f) => f.included).reduce((s, f) => s + f.bytes, 0),
+      totalEstimatedTokens: files.reduce((s, f) => s + f.estimatedTokens, 0),
+      includedTokens: files.filter((f) => f.included).reduce((s, f) => s + f.estimatedTokens, 0),
+      files,
+      folders: [
+        { folderPath: "assets", totalFiles: 2, totalBytes: 0, totalTokens: 200100, includedTokens: 100, includedFiles: 1, excludedFiles: 1 },
+        { folderPath: "src", totalFiles: 1, totalBytes: 0, totalTokens: 500, includedTokens: 500, includedFiles: 1, excludedFiles: 0 },
+      ],
+      languages: [],
+      warnings: [],
+      riskFiles: files.filter((f) => f.riskFlags.length > 0),
+    };
+
+    const result = createRepoMap(scan, { tokenBudget: 8000 });
+
+    expect(result.topLevelFolders.map((folder) => folder.relativePath)).toEqual(["src", "assets"]);
+    expect(result.topLevelFolders[1]).toEqual({ relativePath: "assets", estimatedTokens: 100, fileCount: 1 });
   });
 
   it("includes language breakdown", () => {

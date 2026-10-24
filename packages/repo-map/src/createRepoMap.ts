@@ -13,7 +13,7 @@ export function createRepoMap(
     .filter((f) => f.folderPath !== "." && f.includedFiles > 0)
     .map((f) => ({
       relativePath: f.folderPath,
-      estimatedTokens: f.totalTokens,
+      estimatedTokens: f.includedTokens,
       fileCount: f.includedFiles,
     }))
     .sort((a, b) => b.estimatedTokens - a.estimatedTokens)
