@@ -155,4 +155,31 @@ describe("selectImportantFiles", () => {
     expect(selected.excludedFiles).toHaveLength(1);
     expect(selected.excludedFiles[0].relativePath).toBe("node_modules/foo/index.js");
   });
+
+  it("keeps excluded sensitive files in riskyFiles without token details", () => {
+    const result = makeScanResult([
+      makeFile({ relativePath: ".env", extension: "", estimatedTokens: 1200, included: false, excludedReason: "potential secret file", riskFlags: ["secret"] }),
+      makeFile({ relativePath: "data/prod.sql", extension: ".sql", estimatedTokens: 9000, included: false, excludedReason: "database dump", riskFlags: ["database-dump"] }),
+      makeFile({ relativePath: "dist/bundle.min.js", extension: ".js", estimatedTokens: 8000, included: false, excludedReason: "generated", riskFlags: ["generated"] }),
+      makeFile({ relativePath: "src/index.ts", extension: ".ts", estimatedTokens: 200 }),
+    ]);
+
+    const selected = selectImportantFiles(result, { tokenBudget: 8000 });
+    const riskyPaths = selected.riskyFiles.map((f) => f.relativePath).sort();
+    expect(riskyPaths).toEqual([".env", "data/prod.sql"]);
+    expect(selected.riskyFiles.every((f) => f.estimatedTokens === 0)).toBe(true);
+    expect(selected.riskyFiles.find((f) => f.relativePath === ".env")?.reason).toBe("potential secret file");
+    expect(selected.excludedFiles.map((f) => f.relativePath)).toEqual(expect.arrayContaining([".env", "data/prod.sql"]));
+    expect(selected.generatedFiles.map((f) => f.relativePath)).toContain("dist/bundle.min.js");
+  });
+
+  it("does not add non-sensitive excluded files to riskyFiles", () => {
+    const result = makeScanResult([
+      makeFile({ relativePath: "dist/bundle.min.js", extension: ".js", estimatedTokens: 8000, included: false, excludedReason: "generated", riskFlags: ["generated"] }),
+      makeFile({ relativePath: "pnpm-lock.yaml", extension: ".yaml", estimatedTokens: 3000, included: false, excludedReason: "lockfile", riskFlags: ["lockfile"] }),
+    ]);
+
+    const selected = selectImportantFiles(result, { tokenBudget: 8000 });
+    expect(selected.riskyFiles).toHaveLength(0);
+  });
 });

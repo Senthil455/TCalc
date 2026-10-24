@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { WorkspaceScanResult, WorkspaceFileInfo, FolderStats, LanguageBreakdown } from "@wma/core";
 import { createRepoMap } from "../src/createRepoMap.js";
+import { formatRepoMapMarkdown } from "../src/formatRepoMapMarkdown.js";
 
 function makeFile(overrides: Partial<WorkspaceFileInfo> & { relativePath: string }): WorkspaceFileInfo {
   return {
@@ -156,6 +157,39 @@ describe("createRepoMap", () => {
     // The excluded file keeps its tokens out of the map's important set.
     expect(result.importantFiles.map((f) => f.relativePath)).not.toContain("src/vendor.min.js");
     expect(result.recommendedExclude.filter((f) => f.relativePath === "src/vendor.min.js")).toHaveLength(1);
+  });
+
+  it("warns about sensitive files that the scanner excluded", () => {
+    const files: WorkspaceFileInfo[] = [
+      makeFile({ relativePath: "src/index.ts", extension: ".ts", estimatedTokens: 200 }),
+      makeFile({ relativePath: ".env", extension: "", estimatedTokens: 1200, included: false, excludedReason: "potential secret file", riskFlags: ["secret"] }),
+    ];
+    const scan: WorkspaceScanResult = {
+      rootPath: "/workspace",
+      scannedAt: new Date().toISOString(),
+      totalFiles: files.length,
+      includedFiles: files.filter((f) => f.included).length,
+      excludedFiles: files.filter((f) => !f.included).length,
+      totalBytes: files.reduce((s, f) => s + f.bytes, 0),
+      includedBytes: files.filter((f) => f.included).reduce((s, f) => s + f.bytes, 0),
+      totalEstimatedTokens: files.reduce((s, f) => s + f.estimatedTokens, 0),
+      includedTokens: files.filter((f) => f.included).reduce((s, f) => s + f.estimatedTokens, 0),
+      files,
+      folders: [],
+      languages: [],
+      warnings: [],
+      riskFiles: files.filter((f) => f.riskFlags.length > 0),
+    };
+
+    const result = createRepoMap(scan, { tokenBudget: 8000 });
+    const risky = result.riskyFiles.find((f) => f.relativePath === ".env");
+
+    expect(risky).toBeDefined();
+    expect(risky!.estimatedTokens).toBe(0);
+    expect(result.summary).toContain("Risky files: 1");
+    expect(result.agentInstructions.some((line) => line.includes("potentially sensitive file(s)"))).toBe(true);
+    expect(formatRepoMapMarkdown(result)).toContain(".env");
+    expect(formatRepoMapMarkdown(result)).not.toContain("No risk-flagged files detected.");
   });
 
   it("handles empty scan result gracefully", () => {

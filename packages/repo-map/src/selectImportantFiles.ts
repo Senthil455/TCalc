@@ -86,6 +86,7 @@ const EXCLUDED_PATTERNS = [
 
 const LARGE_FILE_THRESHOLD = 50000;
 const GENERATED_EXTENSIONS = new Set([".min.js", ".bundle.js", ".generated.ts", ".generated.js"]);
+const SENSITIVE_RISK_FLAGS = new Set(["secret", "database-dump", "log-file"]);
 
 function isGeneratedFile(relativePath: string, extension: string): boolean {
   if (GENERATED_EXTENSIONS.has(extension)) return true;
@@ -239,6 +240,12 @@ export function selectImportantFiles(
     // guidance, so generated files stay listed here whether or not their tokens are counted.
     if (isGeneratedEntry(rp, file.extension, file.riskFlags)) {
       generatedFiles.push(repoFile);
+    }
+
+    // Excluded secrets and other sensitive files still need a warning. Keep only the path and
+    // exclusion reason so the repo map never exposes their contents or token details.
+    if (file.riskFlags.some((flag) => SENSITIVE_RISK_FLAGS.has(flag))) {
+      riskyFiles.push({ ...repoFile, estimatedTokens: 0 });
     }
   }
 
