@@ -11,6 +11,7 @@ concurrency:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   report:
@@ -89,6 +90,7 @@ jobs:
       # reports are still produced and uploaded as artifacts in both cases.
       - name: Comment PR summary (trusted PRs only)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
