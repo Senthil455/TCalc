@@ -100,6 +100,30 @@ describe("selectImportantFiles", () => {
     expect(selected.largeFiles[0].relativePath).toBe("data/big-file.json");
   });
 
+  it("keeps large entry points in entryPoints and large-file metadata", () => {
+    const result = makeScanResult([
+      makeFile({ relativePath: "src/index.ts", extension: ".ts", estimatedTokens: 60000 }),
+      makeFile({ relativePath: "server.ts", extension: ".ts", estimatedTokens: 70000 }),
+      makeFile({ relativePath: "src/ordinary.ts", extension: ".ts", estimatedTokens: 60000 }),
+    ]);
+
+    const selected = selectImportantFiles(result, { tokenBudget: 8000 });
+    const entryPaths = selected.entryPoints.map((f) => f.relativePath).sort();
+    expect(entryPaths).toEqual(["server.ts", "src/index.ts"]);
+    expect(selected.entryPoints.every((f) => f.priority === 100)).toBe(true);
+    expect(selected.entryPoints.every((f) => f.reason === "Likely entry point")).toBe(true);
+
+    const largePaths = selected.largeFiles.map((f) => f.relativePath).sort();
+    expect(largePaths).toEqual(["server.ts", "src/index.ts", "src/ordinary.ts"]);
+
+    const recommendedExcludePaths = selected.recommendedExclude.map((f) => f.relativePath);
+    expect(recommendedExcludePaths).toEqual(expect.arrayContaining(["server.ts", "src/index.ts"]));
+
+    const ordinary = selected.largeFiles.find((f) => f.relativePath === "src/ordinary.ts");
+    expect(ordinary?.priority).toBe(20);
+    expect(selected.entryPoints.map((f) => f.relativePath)).not.toContain("src/ordinary.ts");
+  });
+
   it("detects AGENTS.md and CLAUDE.md", () => {
     const result = makeScanResult([
       makeFile({ relativePath: "AGENTS.md", extension: ".md" }),

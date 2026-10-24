@@ -158,6 +158,36 @@ describe("createRepoMap", () => {
     expect(result.recommendedExclude.filter((f) => f.relativePath === "src/vendor.min.js")).toHaveLength(1);
   });
 
+  it("keeps large entry points in the entry point guidance", () => {
+    const files: WorkspaceFileInfo[] = [
+      makeFile({ relativePath: "src/index.ts", extension: ".ts", estimatedTokens: 60000 }),
+      makeFile({ relativePath: "src/util.ts", extension: ".ts", estimatedTokens: 100 }),
+    ];
+    const scan: WorkspaceScanResult = {
+      rootPath: "/workspace",
+      scannedAt: new Date().toISOString(),
+      totalFiles: files.length,
+      includedFiles: files.filter((f) => f.included).length,
+      excludedFiles: files.filter((f) => !f.included).length,
+      totalBytes: files.reduce((s, f) => s + f.bytes, 0),
+      includedBytes: files.filter((f) => f.included).reduce((s, f) => s + f.bytes, 0),
+      totalEstimatedTokens: files.reduce((s, f) => s + f.estimatedTokens, 0),
+      includedTokens: files.filter((f) => f.included).reduce((s, f) => s + f.estimatedTokens, 0),
+      files,
+      folders: [],
+      languages: [],
+      warnings: [],
+      riskFiles: files.filter((f) => f.riskFlags.length > 0),
+    };
+
+    const result = createRepoMap(scan, { tokenBudget: 200000 });
+
+    expect(result.entryPoints.map((f) => f.relativePath)).toContain("src/index.ts");
+    expect(result.largeFiles.map((f) => f.relativePath)).toContain("src/index.ts");
+    expect(result.recommendedExclude.map((f) => f.relativePath)).toContain("src/index.ts");
+    expect(result.agentInstructions.some((line) => line.includes("src/index.ts"))).toBe(true);
+  });
+
   it("handles empty scan result gracefully", () => {
     const scan: WorkspaceScanResult = {
       rootPath: "/empty",

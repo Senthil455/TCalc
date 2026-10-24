@@ -282,9 +282,9 @@ function getPriority(
   if (riskFlags.includes("database-dump")) return 10;
   if (riskFlags.includes("log-file")) return 5;
 
-  if (estimatedTokens > LARGE_FILE_THRESHOLD) return 20;
-
   if (matchPattern(rp, ENTRY_POINT_PATTERNS)) return 100;
+
+  if (estimatedTokens > LARGE_FILE_THRESHOLD) return 20;
   if (matchPattern(rp, CONFIG_PATTERNS)) return 90;
   if (matchPattern(rp, DOC_PATTERNS)) return 80;
   if (matchPattern(rp, TEST_PATTERNS)) return 70;
