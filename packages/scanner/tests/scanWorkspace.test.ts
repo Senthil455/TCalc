@@ -202,6 +202,36 @@ describe("scanWorkspace traversal", () => {
     expect(result.files[0].estimatedTokens).toBe(7);
   });
 
+  it("keeps token totals finite for files with Object.prototype extension names", async () => {
+    const root = await tempDirectory("tcalc-prototype-extension-");
+
+    await writeFile(path.join(root, "index.ts"), "export const value = 1;");
+    await writeFile(
+      path.join(root, "file.constructor"),
+      "export const inherited = true;",
+    );
+
+    const result = await scanWorkspace({ rootPath: root });
+
+    for (const file of result.files) {
+      expect(Number.isFinite(file.estimatedTokens)).toBe(true);
+    }
+    expect(Number.isFinite(result.totalEstimatedTokens)).toBe(true);
+    expect(Number.isFinite(result.includedTokens)).toBe(true);
+
+    const serialized = JSON.parse(JSON.stringify(result)) as {
+      totalEstimatedTokens: number | null;
+      includedTokens: number | null;
+      files: Array<{ estimatedTokens: number | null }>;
+    };
+
+    expect(serialized.totalEstimatedTokens).not.toBeNull();
+    expect(serialized.includedTokens).not.toBeNull();
+    for (const file of serialized.files) {
+      expect(file.estimatedTokens).not.toBeNull();
+    }
+  });
+
   it("excludes generated assets outside build directories from the workspace total", async () => {
     const root = await tempDirectory("tcalc-generated-");
     const source = path.join(root, "src");

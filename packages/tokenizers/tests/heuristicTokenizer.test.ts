@@ -71,6 +71,36 @@ describe("estimateFileTokens", () => {
     const content = "some file content here";
     expect(estimateFileTokens(content)).toBe(estimateTokens(content));
   });
+
+  it("should use the neutral factor for extensions that match Object.prototype members", () => {
+    const content = "export const value = 42;";
+    const baseline = estimateFileTokens(content, "file.unknown");
+
+    for (const filename of [
+      "file.constructor",
+      "file.__proto__",
+      "file.CONSTRUCTOR",
+      "file.__PROTO__",
+    ]) {
+      expect(estimateFileTokens(content, filename)).toBe(baseline);
+      expect(Number.isFinite(estimateFileTokens(content, filename))).toBe(true);
+    }
+  });
+
+  it("should return zero for empty content even with an inherited-property extension", () => {
+    expect(estimateFileTokens("", "file.constructor")).toBe(0);
+    expect(estimateFileTokens("", "file.__proto__")).toBe(0);
+  });
+
+  it("should keep known extension adjustments unchanged", () => {
+    const content = "some content";
+    expect(estimateFileTokens(content, "data.json")).toBe(
+      Math.round(estimateTokens(content) * 0.9),
+    );
+    expect(estimateFileTokens(content, "data.lock")).toBe(
+      Math.round(estimateTokens(content) * 1.5),
+    );
+  });
 });
 
 describe("estimateTokensFromBytes", () => {
@@ -137,5 +167,28 @@ describe("HeuristicTokenizer", () => {
     const lockResult = tokenizer.estimateFile("Cargo.lock", content);
     const txtResult = tokenizer.estimateFile("readme.txt", content);
     expect(lockResult.tokens).toBeGreaterThan(txtResult.tokens);
+  });
+
+  it("should treat inherited-property extensions as unadjusted", () => {
+    const content = "export const value = 42;";
+    const baseline = tokenizer.estimateFile("file.unknown", content);
+
+    for (const filename of [
+      "file.constructor",
+      "file.__proto__",
+      "file.CONSTRUCTOR",
+      "file.__PROTO__",
+    ]) {
+      const result = tokenizer.estimateFile(filename, content);
+      expect(Number.isFinite(result.tokens)).toBe(true);
+      expect(result.tokens).toBe(baseline.tokens);
+      expect(result.details).toBeUndefined();
+    }
+  });
+
+  it("should return zero for empty content with an inherited-property extension", () => {
+    for (const filename of ["file.constructor", "file.__proto__"]) {
+      expect(tokenizer.estimateFile(filename, "").tokens).toBe(0);
+    }
   });
 });
