@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  copyFile,
   mkdtemp,
   mkdir,
+  realpath,
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
   readFile,
 } from "node:fs/promises";
@@ -143,6 +146,77 @@ describe("scanWorkspace traversal", () => {
     expect(third.cacheMisses).toBeGreaterThan(0);
   });
 
+  it("does not reuse cache entries when another root shares the cache file", async () => {
+    const rootA = await tempDirectory("tcalc-cache-root-a-");
+    const rootB = await tempDirectory("tcalc-cache-root-b-");
+    const shared = await tempDirectory("tcalc-cache-shared-");
+    const cacheFile = path.join(shared, "scan.json");
+
+    await writeCacheTwins(rootA, rootB);
+
+    const first = await scanWorkspace({ rootPath: rootA, cacheFile });
+    const second = await scanWorkspace({ rootPath: rootB, cacheFile });
+    const config = second.files.find((file) => file.relativePath === "config.ts");
+
+    expect(first.cacheHits).toBe(0);
+    expect(second.cacheHits).toBe(0);
+    expect(config?.riskFlags).toContain("secret");
+    expect(config?.included).toBe(false);
+
+    const persisted = JSON.parse(await readFile(cacheFile, "utf8")) as {
+      rootPath: string;
+    };
+
+    expect(persisted.rootPath).toBe(await realpath(rootB));
+  });
+
+  it("does not trust a cache file copied between workspaces", async () => {
+    const rootA = await tempDirectory("tcalc-cache-copy-a-");
+    const rootB = await tempDirectory("tcalc-cache-copy-b-");
+    const shared = await tempDirectory("tcalc-cache-copy-shared-");
+    const originalCache = path.join(shared, "original.json");
+    const copiedCache = path.join(shared, "copied.json");
+
+    await writeCacheTwins(rootA, rootB);
+
+    await scanWorkspace({ rootPath: rootA, cacheFile: originalCache });
+    await copyFile(originalCache, copiedCache);
+
+    const second = await scanWorkspace({ rootPath: rootB, cacheFile: copiedCache });
+    const config = second.files.find((file) => file.relativePath === "config.ts");
+
+    expect(second.cacheHits).toBe(0);
+    expect(config?.riskFlags).toContain("secret");
+    expect(config?.included).toBe(false);
+  });
+
+  it("reuses a cache through a symlinked alias of the same root", async () => {
+    const root = await tempDirectory("tcalc-cache-alias-");
+    const parent = await tempDirectory("tcalc-cache-alias-parent-");
+    const alias = path.join(parent, "workspace");
+    const cacheFile = path.join(parent, "scan.json");
+
+    await writeFile(path.join(root, "index.ts"), "export const value = 1;");
+    await symlink(
+      root,
+      alias,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const first = await scanWorkspace({ rootPath: root, cacheFile });
+    const second = await scanWorkspace({ rootPath: alias, cacheFile });
+
+    expect(first.cacheHits).toBe(0);
+    expect(second.cacheHits).toBe(1);
+    expect(second.files.map((file) => file.relativePath)).toEqual(["index.ts"]);
+
+    const persisted = JSON.parse(await readFile(cacheFile, "utf8")) as {
+      rootPath: string;
+    };
+
+    expect(persisted.rootPath).toBe(await realpath(root));
+  });
+
   it("rebuilds version 2 caches so stale SQL dump flags do not survive upgrades", async () => {
     const root = await tempDirectory("tcalc-cache-sql-upgrade-");
     const cacheFile = path.join(root, ".cache", "scan.json");
@@ -182,7 +256,7 @@ describe("scanWorkspace traversal", () => {
     expect(result.cacheHits).toBe(0);
     expect(query?.riskFlags).not.toContain("database-dump");
     expect(query?.included).toBe(true);
-    expect(rebuiltCache.version).toBe(3);
+    expect(rebuiltCache.version).toBe(SCAN_CACHE_VERSION);
   });
 
   it("uses an optional provider tokenizer in the scan path", async () => {
@@ -323,6 +397,24 @@ describe("language percentage consistency", () => {
     );
   });
 });
+
+async function writeCacheTwins(rootA: string, rootB: string): Promise<void> {
+  const benign = 'const value = "abcdefghijklmnop";';
+  const secret = 'const apiKey = "abcdefghijklmnop";';
+  const benignContent = benign.padEnd(secret.length, " ");
+  const fileA = path.join(rootA, "config.ts");
+  const fileB = path.join(rootB, "config.ts");
+  const timestamp = new Date("2026-01-01T00:00:00.000Z");
+
+  await writeFile(fileA, benignContent);
+  await writeFile(fileB, secret);
+  await Promise.all([utimes(fileA, timestamp, timestamp), utimes(fileB, timestamp, timestamp)]);
+
+  const [statA, statB] = await Promise.all([stat(fileA), stat(fileB)]);
+
+  expect(statA.size).toBe(statB.size);
+  expect(statA.mtimeMs).toBe(statB.mtimeMs);
+}
 
 async function tempDirectory(prefix: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), prefix));

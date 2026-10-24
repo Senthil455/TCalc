@@ -32,6 +32,7 @@ interface WalkContext {
 
 export async function scanWorkspace(options: ScanOptions): Promise<WorkspaceScanResult> {
   const { rootPath } = options;
+  const rootRealPath = await realpath(rootPath);
   const warnings: string[] = [];
   const cacheRelativePath = options.cacheFile ? path.relative(rootPath, options.cacheFile).replace(/\\/g, "/") : undefined;
   const cacheExclude = cacheRelativePath && !cacheRelativePath.startsWith("../") && !path.isAbsolute(cacheRelativePath) ? [cacheRelativePath] : [];
@@ -46,12 +47,12 @@ export async function scanWorkspace(options: ScanOptions): Promise<WorkspaceScan
 
   const allFiles: WorkspaceFileInfo[] = [];
   const tokenizerKey = options.tokenizer ? `${options.tokenizer.provider}:${options.tokenizer.id}:${options.tokenizerModel ?? ""}` : "heuristic-v1";
-  const cache = await loadScanCache(options.cacheFile, tokenizerKey);
+  const cache = await loadScanCache(options.cacheFile, tokenizerKey, rootRealPath);
   const nextCache = new Map<string, ScanCacheEntry>();
   let cacheHits = 0;
   let cacheMisses = 0;
   const filePaths = await walkFiles(rootPath, rootPath, resolver, {
-    rootRealPath: await realpath(rootPath),
+    rootRealPath,
     visited: new Set(),
     skipRelativePaths: new Set(cacheExclude),
     warnings,
@@ -71,7 +72,7 @@ export async function scanWorkspace(options: ScanOptions): Promise<WorkspaceScan
   }
 
   try {
-    await saveScanCache(options.cacheFile, tokenizerKey, nextCache);
+    await saveScanCache(options.cacheFile, tokenizerKey, rootRealPath, nextCache);
   } catch (error) {
     warnings.push(`Failed to write scan cache: ${errorMessage(error)}`);
   }
