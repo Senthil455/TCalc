@@ -76,6 +76,8 @@ pnpm cli repo-map ./my-project --budget 8000
 pnpm cli rules ./my-project --target codex --mode repo-map-first
 ```
 
+The Codex target writes `AGENTS.md`, which Codex loads by default. Add `--yes` to write the file; if an `AGENTS.md` already exists, `rules` refuses to replace it unless you pass `--force` or choose a different path with `--output`.
+
 Other commands generate Markdown/JSON reports, validate model catalogs, create MCP configs, and start the local MCP server. Run `pnpm cli --help` for the complete command list.
 
 ### Ignore sources and precedence

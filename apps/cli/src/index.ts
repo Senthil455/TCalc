@@ -6,7 +6,7 @@ import path from "node:path";
 import { executeScan } from "./commands/scan.js";
 import { executeRecommend } from "./commands/recommend.js";
 import { executeRepoMap } from "./commands/repoMap.js";
-import { executeRules } from "./commands/rules.js";
+import { executeRules, assertSafeRulesOutput } from "./commands/rules.js";
 import { executeReport } from "./commands/report.js";
 import { executeCatalogFetch, executeCatalogValidate } from "./commands/catalog.js";
 import { generateMcpConfig } from "./commands/mcpConfig.js";
@@ -138,7 +138,8 @@ program
   .option("--mode <mode>", "Optimization mode", parseOptimizationMode, "normal")
   .option("--output <file>", "Write output to file")
   .option("--stdout", "Print generated rules without writing a file")
-  .option("--yes", "Overwrite without confirmation in non-interactive mode")
+  .option("--yes", "Write the generated file")
+  .option("--force", "Overwrite an existing AGENTS.md without confirmation")
   .action(async (target, opts) => {
     try {
       const result = await executeRules({
@@ -164,6 +165,7 @@ program
         return;
       }
 
+      assertSafeRulesOutput(outputPath, result.fileName, opts.force === true);
       await writeFile(outputPath, result.content, "utf-8");
       console.log(`Agent rules written to ${outputPath}`);
     } catch (err) {
