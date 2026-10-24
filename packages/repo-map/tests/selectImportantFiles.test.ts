@@ -155,4 +155,70 @@ describe("selectImportantFiles", () => {
     expect(selected.excludedFiles).toHaveLength(1);
     expect(selected.excludedFiles[0].relativePath).toBe("node_modules/foo/index.js");
   });
+
+  it("recognizes configs inside nested package roots", () => {
+    const result = makeScanResult([
+      makeFile({ relativePath: "package.json", extension: ".json", language: "JSON" }),
+      makeFile({ relativePath: "apps/web/package.json", extension: ".json", language: "JSON" }),
+      makeFile({ relativePath: "apps/web/tsconfig.json", extension: ".json", language: "JSON" }),
+      makeFile({ relativePath: "apps/web/tsconfig.build.json", extension: ".json", language: "JSON" }),
+      makeFile({ relativePath: "apps/web/vite.config.ts", extension: ".ts" }),
+      makeFile({ relativePath: "packages/api/pyproject.toml", extension: ".toml", language: "TOML" }),
+    ]);
+
+    const selected = selectImportantFiles(result, { tokenBudget: 8000 });
+    expect(selected.configFiles.map((f) => f.relativePath).sort()).toEqual([
+      "apps/web/package.json",
+      "apps/web/tsconfig.build.json",
+      "apps/web/tsconfig.json",
+      "apps/web/vite.config.ts",
+      "package.json",
+      "packages/api/pyproject.toml",
+    ]);
+    expect(selected.configFiles.every((f) => f.priority === 90)).toBe(true);
+  });
+
+  it("does not treat config-shaped files outside package roots as configs", () => {
+    const result = makeScanResult([
+      makeFile({ relativePath: "src/plain/next.config.js", extension: ".js" }),
+      makeFile({ relativePath: "packages/api/pnpm-workspace.yaml", extension: ".yaml", language: "YAML" }),
+    ]);
+
+    const selected = selectImportantFiles(result, { tokenBudget: 8000 });
+    expect(selected.configFiles).toHaveLength(0);
+    expect(selected.importantFiles.map((f) => f.relativePath).sort()).toEqual([
+      "packages/api/pnpm-workspace.yaml",
+      "src/plain/next.config.js",
+    ]);
+  });
+
+  it("does not classify configs under generated or vendor directories", () => {
+    const result = makeScanResult([
+      makeFile({ relativePath: "packages/api/package.json", extension: ".json", language: "JSON" }),
+      makeFile({ relativePath: "packages/api/dist/tsconfig.json", extension: ".json", language: "JSON", included: false, excludedReason: "build output" }),
+      makeFile({ relativePath: "node_modules/pkg/package.json", extension: ".json", language: "JSON", included: false, excludedReason: "vendor" }),
+    ]);
+
+    const selected = selectImportantFiles(result, { tokenBudget: 8000 });
+    expect(selected.configFiles.map((f) => f.relativePath)).toEqual(["packages/api/package.json"]);
+    expect(selected.excludedFiles.map((f) => f.relativePath).sort()).toEqual([
+      "node_modules/pkg/package.json",
+      "packages/api/dist/tsconfig.json",
+    ]);
+  });
+
+  it("keeps root-level config detection unchanged", () => {
+    const result = makeScanResult([
+      makeFile({ relativePath: "pnpm-workspace.yaml", extension: ".yaml", language: "YAML" }),
+      makeFile({ relativePath: ".env.example", extension: "", language: "Unknown" }),
+      makeFile({ relativePath: "turbo.json", extension: ".json", language: "JSON" }),
+    ]);
+
+    const selected = selectImportantFiles(result, { tokenBudget: 8000 });
+    expect(selected.configFiles.map((f) => f.relativePath).sort()).toEqual([
+      ".env.example",
+      "pnpm-workspace.yaml",
+      "turbo.json",
+    ]);
+  });
 });

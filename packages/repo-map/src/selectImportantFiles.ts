@@ -1,11 +1,28 @@
 import type { WorkspaceScanResult, RepoMapOptions, RepoMapFile } from "@wma/core";
 
-const CONFIG_PATTERNS = [
-  /^package\.json$/,
+const ROOT_CONFIG_BASENAMES = [
   /^pnpm-workspace\.yaml$/,
   /^package-lock\.json$/,
   /^pnpm-lock\.yaml$/,
   /^yarn\.lock$/,
+  /^biome\.json$/,
+  /^turbo\.json$/,
+  /^nx\.json$/,
+  /^\.env\.example$/,
+];
+
+const NESTED_CONFIG_BASENAMES = [
+  /^package\.json$/,
+  /^pyproject\.toml$/,
+  /^Cargo\.toml$/,
+  /^go\.mod$/,
+  /^composer\.json$/,
+  /^Gemfile$/,
+  /^pom\.xml$/,
+  /^build\.gradle$/,
+  /^build\.gradle\.kts$/,
+  /^settings\.gradle$/,
+  /^settings\.gradle\.kts$/,
   /^tsconfig\.json$/,
   /^tsconfig\..*\.json$/,
   /^vite\.config\..*/,
@@ -16,13 +33,23 @@ const CONFIG_PATTERNS = [
   /^tailwind\.config\..*/,
   /^eslint\.config\..*/,
   /^prettier\.config\..*/,
-  /^biome\.json$/,
-  /^turbo\.json$/,
-  /^nx\.json$/,
   /^docker-compose\..*/,
   /^Dockerfile$/,
-  /^\.env\.example$/,
 ];
+
+const PACKAGE_MANIFEST_BASENAMES = new Set([
+  "package.json",
+  "pyproject.toml",
+  "Cargo.toml",
+  "go.mod",
+  "composer.json",
+  "Gemfile",
+  "pom.xml",
+  "build.gradle",
+  "build.gradle.kts",
+  "settings.gradle",
+  "settings.gradle.kts",
+]);
 
 const DOC_PATTERNS = [
   /^README\.md$/i,
@@ -114,6 +141,52 @@ function matchPattern(relativePath: string, patterns: RegExp[]): boolean {
   return patterns.some((p) => p.test(relativePath));
 }
 
+function basename(relativePath: string): string {
+  const separator = relativePath.lastIndexOf("/");
+  return separator === -1 ? relativePath : relativePath.slice(separator + 1);
+}
+
+function dirname(relativePath: string): string {
+  const separator = relativePath.lastIndexOf("/");
+  return separator === -1 ? "" : relativePath.slice(0, separator);
+}
+
+function isGeneratedOrVendorPath(relativePath: string): boolean {
+  const generatedSegments = ["node_modules", "dist", "build", "out", "coverage", ".git", ".next"];
+  return relativePath.split("/").some((segment) => generatedSegments.includes(segment));
+}
+
+function collectPackageRoots(files: WorkspaceScanResult["files"]): Set<string> {
+  const roots = new Set<string>();
+  for (const file of files) {
+    const relativePath = file.relativePath.replace(/\\/g, "/");
+    if (isGeneratedOrVendorPath(relativePath)) continue;
+    if (PACKAGE_MANIFEST_BASENAMES.has(basename(relativePath))) {
+      roots.add(dirname(relativePath));
+    }
+  }
+  return roots;
+}
+
+/**
+ * Root-level config files keep their historical behavior. Nested config files are only treated as
+ * important when they sit directly inside a package root, so an arbitrary file named like a config
+ * does not become important merely because of its basename.
+ */
+function isConfigPath(relativePath: string, packageRoots: Set<string>): boolean {
+  if (isGeneratedOrVendorPath(relativePath)) return false;
+
+  const name = basename(relativePath);
+  const directory = dirname(relativePath);
+
+  if (directory === "") {
+    return matchPattern(name, ROOT_CONFIG_BASENAMES) || matchPattern(name, NESTED_CONFIG_BASENAMES);
+  }
+
+  if (matchPattern(name, ROOT_CONFIG_BASENAMES)) return false;
+  return matchPattern(name, NESTED_CONFIG_BASENAMES) && packageRoots.has(directory);
+}
+
 function getLanguage(extension: string): string | undefined {
   const langMap: Record<string, string> = {
     ".ts": "TypeScript",
@@ -171,6 +244,7 @@ export function selectImportantFiles(
   recommendedExclude: RepoMapFile[];
 } {
   const includedFiles = scanResult.files.filter((f) => f.included);
+  const packageRoots = collectPackageRoots(scanResult.files);
 
   const entryPoints: RepoMapFile[] = [];
   const testFiles: RepoMapFile[] = [];
@@ -185,7 +259,7 @@ export function selectImportantFiles(
 
   for (const file of includedFiles) {
     const rp = file.relativePath.replace(/\\/g, "/");
-    const priority = getPriority(rp, file.extension, file.riskFlags, file.estimatedTokens);
+    const priority = getPriority(rp, file.extension, file.riskFlags, file.estimatedTokens, packageRoots);
     const reason = getReason(rp, priority);
     const repoFile: RepoMapFile = {
       relativePath: rp,
@@ -272,6 +346,7 @@ function getPriority(
   extension: string,
   riskFlags: string[],
   estimatedTokens: number,
+  packageRoots: Set<string>,
 ): number {
   const rp = relativePath.replace(/\\/g, "/");
 
@@ -285,7 +360,7 @@ function getPriority(
   if (estimatedTokens > LARGE_FILE_THRESHOLD) return 20;
 
   if (matchPattern(rp, ENTRY_POINT_PATTERNS)) return 100;
-  if (matchPattern(rp, CONFIG_PATTERNS)) return 90;
+  if (isConfigPath(rp, packageRoots)) return 90;
   if (matchPattern(rp, DOC_PATTERNS)) return 80;
   if (matchPattern(rp, TEST_PATTERNS)) return 70;
   if (matchPattern(rp, IMPORTANT_SOURCE_PATTERNS)) return 60;
