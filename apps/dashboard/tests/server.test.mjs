@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { request } from "node:http";
 import path from "node:path";
@@ -161,9 +161,77 @@ test("allows unauthenticated reads only when public read is opted into", async (
   }
 });
 
-function report(title = "Report") {
+test("bounds saved report listing and keeps deterministic order", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "tcalc-dashboard-"));
+  const server = createDashboardServer({ dataDir, token: "secret" });
+  const auth = { authorization: "Bearer secret" };
+  for (let index = 1; index <= 12; index++) {
+    await writeFile(
+      path.join(dataDir, `${1700000000000 + index}-${String(index).padStart(8, "0")}.json`),
+      JSON.stringify(report(`Report ${index}`, `2026-01-${String(index).padStart(2, "0")}`)),
+    );
+  }
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  const url = `http://127.0.0.1:${port}/api/reports`;
+  try {
+    const limited = await fetch(`${url}?limit=5`, { headers: auth });
+    assert.equal(limited.status, 200);
+    const listed = await limited.json();
+    assert.equal(listed.length, 5);
+    assert.deepEqual(listed.map((entry) => entry.title), ["Report 12", "Report 11", "Report 10", "Report 9", "Report 8"]);
+    assert.deepEqual(listed.map((entry) => entry.id), [
+      "1700000000012-00000012",
+      "1700000000011-00000011",
+      "1700000000010-00000010",
+      "1700000000009-00000009",
+      "1700000000008-00000008",
+    ]);
+
+    const repeated = await (await fetch(`${url}?limit=5`, { headers: auth })).json();
+    assert.deepEqual(repeated.map((entry) => entry.id), listed.map((entry) => entry.id));
+
+    const all = await (await fetch(`${url}?limit=200`, { headers: auth })).json();
+    assert.equal(all.length, 12);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("applies a default limit and rejects invalid limits", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "tcalc-dashboard-"));
+  const server = createDashboardServer({ dataDir, token: "secret" });
+  const auth = { authorization: "Bearer secret" };
+  for (let index = 1; index <= 60; index++) {
+    await writeFile(
+      path.join(dataDir, `${1700000000000 + index}-${String(index).padStart(8, "0")}.json`),
+      JSON.stringify(report(`Report ${index}`, new Date(1767225600000 + index * 1000).toISOString())),
+    );
+  }
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  const url = `http://127.0.0.1:${port}/api/reports`;
+  try {
+    const defaulted = await (await fetch(url, { headers: auth })).json();
+    assert.equal(defaulted.length, 50);
+    assert.equal(defaulted[0].title, "Report 60");
+    assert.equal(defaulted.at(-1).title, "Report 11");
+
+    for (const limit of ["0", "201", "abc", "1.5", ""]) {
+      const response = await fetch(`${url}?limit=${encodeURIComponent(limit)}`, { headers: auth });
+      assert.equal(response.status, 400);
+      assert.deepEqual(await response.json(), { error: "limit must be an integer between 1 and 200" });
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+function report(title = "Report", generatedAt = "2026-07-19") {
   return {
-    schemaVersion: "1.0.0", title, generatedAt: "2026-07-19", workspacePath: "/workspace", goal: "debug",
+    schemaVersion: "1.0.0", title, generatedAt, workspacePath: "/workspace", goal: "debug",
     summary: { totalFiles: 1, includedFiles: 1, excludedFiles: 0, totalEstimatedTokens: 10, includedTokens: 10 },
     topTokenConsumers: [], topFolders: [], languages: [], recommendations: null,
     warnings: [], assumptions: [], optimizationChecklist: [],

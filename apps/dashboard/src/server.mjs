@@ -5,6 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const MAX_REPORT_BYTES = 1_000_000;
+const DEFAULT_REPORT_LIST_LIMIT = 50;
+const MAX_REPORT_LIST_LIMIT = 200;
+const REPORT_LIST_CONCURRENCY = 8;
 const SESSION_COOKIE = "tcalc_dashboard_session";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_SESSIONS = 1000;
@@ -29,7 +32,13 @@ export function createDashboardServer(options = {}) {
       if (request.method === "GET" && url.pathname === "/api/reports") {
         const denied = denyRead(request, token, publicRead, sessions);
         if (denied) return json(response, denied.status, denied.body, denied.headers);
-        return json(response, 200, await listReports(dataDir));
+        let limit;
+        try {
+          limit = parseReportListLimit(url.searchParams.get("limit"));
+        } catch (error) {
+          return json(response, 400, { error: error.message });
+        }
+        return json(response, 200, await listReports(dataDir, limit));
       }
       if (request.method === "POST" && url.pathname === "/api/session") {
         if (!token) return json(response, 503, { error: "Report access is disabled until TCALC_DASHBOARD_TOKEN is set" });
@@ -124,18 +133,47 @@ async function serveStatic(response, publicDir, pathname) {
   return false;
 }
 
-async function listReports(dataDir) {
+async function listReports(dataDir, limit = DEFAULT_REPORT_LIST_LIMIT) {
   try {
-    const files = (await readdir(dataDir)).filter((file) => /^[\w-]+\.json$/.test(file));
-    const reports = await Promise.all(files.map(async (file) => {
+    const files = (await readdir(dataDir))
+      .filter((file) => /^[\w-]+\.json$/.test(file))
+      .sort()
+      .reverse()
+      .slice(0, limit);
+    const reports = await mapWithConcurrency(files, REPORT_LIST_CONCURRENCY, async (file) => {
       const report = JSON.parse(await readFile(path.join(dataDir, file), "utf8"));
       return { id: file.slice(0, -5), title: report.title, generatedAt: report.generatedAt, goal: report.goal, summary: report.summary };
-    }));
+    });
     return reports.sort((a, b) => String(b.generatedAt).localeCompare(String(a.generatedAt)));
   } catch (error) {
     if (error.code === "ENOENT") return [];
     throw error;
   }
+}
+
+function parseReportListLimit(value) {
+  if (value === null) return DEFAULT_REPORT_LIST_LIMIT;
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`limit must be an integer between 1 and ${MAX_REPORT_LIST_LIMIT}`);
+  }
+  const limit = Number(value);
+  if (limit < 1 || limit > MAX_REPORT_LIST_LIMIT) {
+    throw new Error(`limit must be an integer between 1 and ${MAX_REPORT_LIST_LIMIT}`);
+  }
+  return limit;
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await mapper(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 async function readBody(request) {
