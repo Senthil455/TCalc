@@ -1,6 +1,7 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolveTargetPath } from "../utils/paths.js";
+import { CliError } from "../utils/errors.js";
 
 export interface McpConfigOptions {
   target: McpTarget;
@@ -8,12 +9,34 @@ export interface McpConfigOptions {
   workspace?: string;
 }
 
+export interface ResolveDefaultCommandOptions {
+  resolveModule?: (specifier: string) => string;
+  isFile?: (filePath: string) => boolean;
+}
+
 export type McpTarget = "cursor" | "continue" | "claude-desktop" | "generic";
 
-function resolveDefaultCommand(): string {
-  const cliDir = path.dirname(fileURLToPath(import.meta.url));
-  const repoRoot = path.resolve(cliDir, "..", "..", "..", "..");
-  return path.resolve(repoRoot, "packages", "mcp-server", "dist", "index.js");
+export function resolveDefaultCommand(options: ResolveDefaultCommandOptions = {}): string {
+  const resolveModule =
+    options.resolveModule ?? ((specifier: string) => createRequire(import.meta.url).resolve(specifier));
+  const isFile = options.isFile ?? ((filePath: string) => statSync(filePath, { throwIfNoEntry: false })?.isFile() ?? false);
+
+  let entry: string;
+  try {
+    entry = resolveModule("@wma/mcp-server");
+  } catch {
+    throw new CliError(
+      "Cannot resolve the TCalc MCP server package @wma/mcp-server from this CLI installation. Reinstall TCalc or pass --command <path-to-mcp-server-entry>.",
+    );
+  }
+
+  if (!isFile(entry)) {
+    throw new CliError(
+      `The TCalc MCP server entry point does not exist or is not a file: ${entry}. Reinstall TCalc or pass --command <path-to-mcp-server-entry>.`,
+    );
+  }
+
+  return entry;
 }
 
 export function generateMcpConfig(options: McpConfigOptions): string {
