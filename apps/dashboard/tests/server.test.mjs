@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { request } from "node:http";
 import path from "node:path";
@@ -158,6 +158,76 @@ test("allows unauthenticated reads only when public read is opted into", async (
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("serves normal static files and internal symlinks", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tcalc-dashboard-"));
+  const publicDir = path.join(root, "public");
+  const server = createDashboardServer({ dataDir: path.join(root, "data"), token: "secret", publicDir });
+  await mkdir(path.join(publicDir, "pages"), { recursive: true });
+  await writeFile(path.join(publicDir, "index.html"), "<h1>Home</h1>");
+  await writeFile(path.join(publicDir, "pages", "about.html"), "<h1>About</h1>");
+  await symlink(path.join(publicDir, "pages", "about.html"), path.join(publicDir, "alias.html"));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  try {
+    const home = await fetch(`http://127.0.0.1:${port}/`);
+    assert.equal(home.status, 200);
+    assert.equal(home.headers.get("content-type"), "text/html; charset=utf-8");
+    assert.equal(await home.text(), "<h1>Home</h1>");
+
+    const about = await fetch(`http://127.0.0.1:${port}/pages/about.html`);
+    assert.equal(about.status, 200);
+    assert.equal(await about.text(), "<h1>About</h1>");
+
+    const alias = await fetch(`http://127.0.0.1:${port}/alias.html`);
+    assert.equal(alias.status, 200);
+    assert.equal(await alias.text(), "<h1>About</h1>");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a file symlink that escapes the public directory", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tcalc-dashboard-"));
+  const publicDir = path.join(root, "public");
+  const outside = path.join(root, "outside");
+  const server = createDashboardServer({ dataDir: path.join(root, "data"), token: "secret", publicDir });
+  await mkdir(publicDir);
+  await mkdir(outside);
+  await writeFile(path.join(outside, "secret.txt"), "top secret");
+  await symlink(path.join(outside, "secret.txt"), path.join(publicDir, "leak.txt"));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/leak.txt`);
+    assert.equal(response.status, 404);
+    assert.equal(await response.text(), JSON.stringify({ error: "Not found" }));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a directory symlink that escapes the public directory", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tcalc-dashboard-"));
+  const publicDir = path.join(root, "public");
+  const outside = path.join(root, "outside");
+  const server = createDashboardServer({ dataDir: path.join(root, "data"), token: "secret", publicDir });
+  await mkdir(publicDir);
+  await mkdir(outside);
+  await writeFile(path.join(outside, "secret.txt"), "top secret");
+  await symlink(outside, path.join(publicDir, "leakdir"), process.platform === "win32" ? "junction" : "dir");
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  try {
+    assert.equal((await fetch(`http://127.0.0.1:${port}/leakdir/secret.txt`)).status, 404);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/leakdir/`)).status, 404);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
   }
 });
 
