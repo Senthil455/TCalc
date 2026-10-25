@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   parseGitStatusPorcelain,
+  resolveGitStatus,
   summarizeGitStatus,
   filterFilesByGitStatus,
   createGitStatusFilterPredicate,
@@ -71,6 +75,45 @@ describe("parseGitStatusPorcelain", () => {
 
     expect(entries[1].path).toBe("docs/spec folder/notes.md");
     expect(entries[1].isUntracked).toBe(true);
+  });
+
+  it("parses NUL-delimited paths without trimming, unquoting, or arrow splitting", () => {
+    const raw = [
+      "M  docs/spec folder/notes.md",
+      "?? src/日本語/ファイル.ts",
+      "R  src/new -> name.ts",
+      "src/old -> name.ts",
+      "?? line\nbreak.ts",
+      "",
+    ].join("\0");
+
+    const entries = parseGitStatusPorcelain(raw);
+
+    expect(entries).toHaveLength(4);
+    expect(entries[0].path).toBe("docs/spec folder/notes.md");
+    expect(entries[1].path).toBe("src/日本語/ファイル.ts");
+    expect(entries[1].isUntracked).toBe(true);
+    expect(entries[2].path).toBe("src/new -> name.ts");
+    expect(entries[2].originalPath).toBe("src/old -> name.ts");
+    expect(entries[2].isStaged).toBe(true);
+    expect(entries[3].path).toBe("line\nbreak.ts");
+    expect(entries[3].isUntracked).toBe(true);
+  });
+
+  it("preserves leading and trailing spaces in NUL-delimited paths", () => {
+    const entries = parseGitStatusPorcelain("??  spaced name.ts \0");
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].path).toBe(" spaced name.ts ");
+  });
+
+  it("parses copied paths from NUL-delimited records", () => {
+    const entries = parseGitStatusPorcelain("C  src/copied.ts\0src/source.ts\0");
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].path).toBe("src/copied.ts");
+    expect(entries[0].originalPath).toBe("src/source.ts");
+    expect(entries[0].indexStatus).toBe("C");
   });
 
   it("parses deleted and conflicted files", () => {
@@ -155,6 +198,40 @@ describe("filterFilesByGitStatus", () => {
     const result = filterFilesByGitStatus(entries, "all-dirty", false);
     expect(result).toEqual(["staged.ts", "unstaged.ts", "untracked.ts", "conflict.ts"]);
   });
+});
+
+describe("resolveGitStatus", () => {
+  it.skipIf(process.platform === "win32")(
+    "requests NUL-delimited porcelain output from git",
+    async () => {
+      const directory = await mkdtemp(path.join(tmpdir(), "tcalc-fake-git-"));
+      const fakeGit = path.join(directory, "git");
+
+      try {
+        await writeFile(
+          fakeGit,
+          [
+            "#!/bin/sh",
+            '[ "$3" = "-z" ] || exit 3',
+            "printf 'M  src/Foo.ts\\000'",
+            "",
+          ].join("\n"),
+        );
+        await chmod(fakeGit, 0o755);
+
+        const summary = await resolveGitStatus({
+          cwd: directory,
+          gitExecutable: fakeGit,
+        });
+
+        expect(summary.entries).toHaveLength(1);
+        expect(summary.entries[0].path).toBe("src/Foo.ts");
+        expect(summary.stagedFiles).toEqual(["src/Foo.ts"]);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("createGitStatusFilterPredicate", () => {

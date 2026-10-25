@@ -11,20 +11,98 @@ import type {
 
 const execFileAsync = promisify(execFile);
 
-function cleanPath(raw: string): string {
+function normalizeGitPath(raw: string): string {
+  // Git always emits forward slashes, but normalize defensively for callers
+  // that hand us captured output from another platform.
+  return raw.replace(/\\/g, "/");
+}
+
+function cleanLegacyPath(raw: string): string {
   let cleaned = raw.trim();
   if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
     cleaned = cleaned.slice(1, -1);
   }
-  // Normalize Windows slashes to forward slashes for uniform cross-platform matching
-  return cleaned.replace(/\\/g, "/");
+  return normalizeGitPath(cleaned);
 }
 
-export function parseGitStatusPorcelain(output: string): GitFileStatus[] {
-  if (!output || !output.trim()) {
-    return [];
+function buildGitFileStatus(
+  indexStatus: GitFileStatusCode,
+  worktreeStatus: GitFileStatusCode,
+  filePath: string,
+  originalPath?: string,
+): GitFileStatus {
+  const isUntracked = indexStatus === "?" && worktreeStatus === "?";
+  const isConflicted =
+    (indexStatus === "U" || worktreeStatus === "U") ||
+    (indexStatus === "A" && worktreeStatus === "A") ||
+    (indexStatus === "D" && worktreeStatus === "D");
+  const isStaged = !isUntracked && !isConflicted && indexStatus !== " " && indexStatus !== "?";
+  const isUnstaged = !isUntracked && !isConflicted && worktreeStatus !== " " && worktreeStatus !== "?";
+  const isDeleted = indexStatus === "D" || worktreeStatus === "D";
+
+  return {
+    path: filePath,
+    originalPath,
+    indexStatus,
+    worktreeStatus,
+    isStaged,
+    isUnstaged,
+    isUntracked,
+    isConflicted,
+    isDeleted,
+  };
+}
+
+function isRenameOrCopy(status: GitFileStatusCode): boolean {
+  return status === "R" || status === "C";
+}
+
+function parseNulDelimitedGitStatus(output: string): GitFileStatus[] {
+  const records = output.split("\0");
+  const results: GitFileStatus[] = [];
+
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index];
+    if (!record || record.length < 3) {
+      continue;
+    }
+
+    const indexStatus = record[0] as GitFileStatusCode;
+    const worktreeStatus = record[1] as GitFileStatusCode;
+    const rawPath = record.substring(3);
+
+    if (!rawPath) {
+      continue;
+    }
+
+    let originalPath: string | undefined;
+
+    if (isRenameOrCopy(indexStatus) || isRenameOrCopy(worktreeStatus)) {
+      // In -z mode a rename or copy emits the destination path followed by a
+      // second NUL-terminated field for the source path. There is no quoting
+      // and no " -> " separator, so names containing the arrow stay intact.
+      const source = records[index + 1];
+      if (source === undefined) {
+        continue;
+      }
+      originalPath = normalizeGitPath(source);
+      index++;
+    }
+
+    results.push(
+      buildGitFileStatus(
+        indexStatus,
+        worktreeStatus,
+        normalizeGitPath(rawPath),
+        originalPath,
+      ),
+    );
   }
 
+  return results;
+}
+
+function parseLegacyNewlineGitStatus(output: string): GitFileStatus[] {
   const lines = output.split(/\r?\n/);
   const results: GitFileStatus[] = [];
 
@@ -46,35 +124,34 @@ export function parseGitStatusPorcelain(output: string): GitFileStatus[] {
 
     if (rawPath.includes(" -> ")) {
       const parts = rawPath.split(" -> ");
-      originalPath = cleanPath(parts[0]);
-      filePath = cleanPath(parts[1]);
+      originalPath = cleanLegacyPath(parts[0]);
+      filePath = cleanLegacyPath(parts[1]);
     } else {
-      filePath = cleanPath(rawPath);
+      filePath = cleanLegacyPath(rawPath);
     }
 
-    const isUntracked = indexStatus === "?" && worktreeStatus === "?";
-    const isConflicted =
-      (indexStatus === "U" || worktreeStatus === "U") ||
-      (indexStatus === "A" && worktreeStatus === "A") ||
-      (indexStatus === "D" && worktreeStatus === "D");
-    const isStaged = !isUntracked && !isConflicted && indexStatus !== " " && indexStatus !== "?";
-    const isUnstaged = !isUntracked && !isConflicted && worktreeStatus !== " " && worktreeStatus !== "?";
-    const isDeleted = indexStatus === "D" || worktreeStatus === "D";
-
-    results.push({
-      path: filePath,
-      originalPath,
-      indexStatus,
-      worktreeStatus,
-      isStaged,
-      isUnstaged,
-      isUntracked,
-      isConflicted,
-      isDeleted,
-    });
+    results.push(
+      buildGitFileStatus(indexStatus, worktreeStatus, filePath, originalPath),
+    );
   }
 
   return results;
+}
+
+export function parseGitStatusPorcelain(output: string): GitFileStatus[] {
+  if (!output) {
+    return [];
+  }
+
+  if (output.includes("\0")) {
+    return parseNulDelimitedGitStatus(output);
+  }
+
+  if (!output.trim()) {
+    return [];
+  }
+
+  return parseLegacyNewlineGitStatus(output);
 }
 
 export function summarizeGitStatus(entries: GitFileStatus[]): GitStatusSummary {
@@ -185,7 +262,7 @@ export async function resolveGitStatus(
   const gitExec = options.gitExecutable ?? "git";
 
   try {
-    const { stdout } = await execFileAsync(gitExec, ["status", "--porcelain=v1", "-uall"], {
+    const { stdout } = await execFileAsync(gitExec, ["status", "--porcelain=v1", "-z", "-uall"], {
       cwd,
       maxBuffer: 10 * 1024 * 1024,
     });
