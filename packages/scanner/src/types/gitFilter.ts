@@ -30,6 +30,15 @@ export interface GitStatusFilterOptions {
   gitExecutable?: string;
 }
 
+export interface GitStatusPredicateOptions {
+  /**
+   * Fold path case during matching. Defaults to false on case-sensitive
+   * platforms (Linux) and true on case-insensitive platforms (Windows and
+   * macOS). Callers that know the repository setting can override it.
+   */
+  caseSensitive?: boolean;
+}
+
 export interface GitStatusSummary {
   stagedFiles: string[];
   unstagedFiles: string[];

@@ -17,5 +17,6 @@ export type {
   GitFileStatusCode,
   GitFilterScope,
   GitStatusFilterOptions,
+  GitStatusPredicateOptions,
   GitStatusSummary,
 } from "./types/gitFilter.js";

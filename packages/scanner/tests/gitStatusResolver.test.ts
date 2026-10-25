@@ -198,4 +198,40 @@ describe("createGitStatusFilterPredicate", () => {
     expect(matcher("/repo/project")).toBe(false);
     expect(matcher("/repo/project/packages/scanner/src/scan.ts")).toBe(true);
   });
+
+  it("distinguishes case when the workspace is case-sensitive", () => {
+    const entries = parseGitStatusPorcelain("M  src/Foo.ts");
+    const matcher = createGitStatusFilterPredicate(entries, "all-dirty", undefined, {
+      caseSensitive: true,
+    });
+
+    expect(matcher("src/Foo.ts")).toBe(true);
+    expect(matcher("src\\Foo.ts")).toBe(true);
+    expect(matcher("src/foo.ts")).toBe(false);
+    expect(matcher("SRC/FOO.TS")).toBe(false);
+    expect(matcher("nested/src/Foo.ts")).toBe(true);
+    expect(matcher("nested/src/foo.ts")).toBe(false);
+  });
+
+  it("folds case when the workspace is case-insensitive", () => {
+    const entries = parseGitStatusPorcelain("M  src/Foo.ts");
+    const matcher = createGitStatusFilterPredicate(entries, "all-dirty", undefined, {
+      caseSensitive: false,
+    });
+
+    expect(matcher("src/Foo.ts")).toBe(true);
+    expect(matcher("src/foo.ts")).toBe(true);
+    expect(matcher("src\\foo.ts")).toBe(true);
+    expect(matcher("nested/SRC/FOO.TS")).toBe(true);
+    expect(matcher("nested/src/other.ts")).toBe(false);
+  });
+
+  it("uses the platform default when case sensitivity is not specified", () => {
+    const entries = parseGitStatusPorcelain("M  src/Foo.ts");
+    const matcher = createGitStatusFilterPredicate(entries, "all-dirty");
+    const caseSensitiveByDefault =
+      process.platform !== "win32" && process.platform !== "darwin";
+
+    expect(matcher("SRC/FOO.TS")).toBe(!caseSensitiveByDefault);
+  });
 });

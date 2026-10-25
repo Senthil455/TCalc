@@ -6,6 +6,7 @@ import type {
   GitFileStatusCode,
   GitFilterScope,
   GitStatusFilterOptions,
+  GitStatusPredicateOptions,
   GitStatusSummary,
 } from "./types/gitFilter.js";
 
@@ -141,13 +142,23 @@ export function filterFilesByGitStatus(
   return filtered.map((e) => e.path);
 }
 
+function defaultCaseSensitive(): boolean {
+  return process.platform !== "win32" && process.platform !== "darwin";
+}
+
 export function createGitStatusFilterPredicate(
   entries: GitFileStatus[],
   scope: GitFilterScope = "all-dirty",
   workspaceRoot?: string,
+  options: GitStatusPredicateOptions = {},
 ): (candidatePath: string) => boolean {
+  const caseSensitive = options.caseSensitive ?? defaultCaseSensitive();
+  const normalize = (value: string): string => {
+    const withForwardSlashes = value.replace(/\\/g, "/");
+    return caseSensitive ? withForwardSlashes : withForwardSlashes.toLowerCase();
+  };
   const matchingPaths = new Set(
-    filterFilesByGitStatus(entries, scope, false).map((p) => p.replace(/\\/g, "/").toLowerCase()),
+    filterFilesByGitStatus(entries, scope, false).map(normalize),
   );
 
   return (candidatePath: string): boolean => {
@@ -156,7 +167,7 @@ export function createGitStatusFilterPredicate(
       const rel = path.relative(workspaceRoot, candidatePath).replace(/\\/g, "/");
       normalized = rel;
     }
-    normalized = normalized.toLowerCase();
+    normalized = normalize(normalized);
 
     if (!normalized) {
       return false;
